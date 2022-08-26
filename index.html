@@ -8,15 +8,39 @@
 <main id="play-area"></main>
 
 <script>
+    const mediator = {
+        subscribers: {},
+        subscribe(name, subscription) {
+            this.subscribers[name] = this.subscribers[name]
+                ? [...this.subscribers[name], subscription]
+                : [subscription];
+        },
+        unsubscribe(name, subscription) {
+            if (this.subscribers[name]) {
+                this.subscribers[name] = this.subscribers[name].filter(sub => sub !== subscription);
+            }
+        },
+        publish(name, data) {
+            this.subscribers[name]?.forEach((sub) => sub(data))
+        },
+    }
+    const events = {
+        RESIZE: 'RESIZE',
+        LOSE_BALL: 'LOSE_BALL',
+    }
+
     const intersectionTypes = {
         VERTICAL: 'VERTICAL',
         HORIZONTAL: 'HORIZONTAL',
+        PLAYER: 'PLAYER',
+        NONE: 'NONE',
     }
     const playArea = document.getElementById('play-area');
     let mouseX, mouseY;
     let prevTime, currTime;
     let isGameStarted = false;
 
+    window.addEventListener('resize', () => mediator.publish(events.RESIZE));
     document.addEventListener('click', () => isGameStarted = true)
     document.addEventListener('mousemove', (event) => {
         mouseX = event.clientX;
@@ -84,7 +108,7 @@
             }
 
             return [
-                {line: top, type: intersectionTypes.VERTICAL},
+                {line: top, type: intersectionTypes.PLAYER},
             ];
         }
 
@@ -107,8 +131,9 @@
     class Ball {
         x;
         y;
-        xSpeed = 2;
-        ySpeed = -2;
+        speed = 5;
+        xSpeed = Math.cos(2 * Math.PI / 6) * this.speed;
+        ySpeed = -Math.sin(2 * Math.PI / 6) * this.speed;
         ballElement;
         ballDiameter = 1;
         totalDistanceAvailable = 0;
@@ -126,6 +151,12 @@
             ball.style.removeProperty('bottom');
 
             this.ballElement = ball;
+
+            mediator.subscribe(events.LOSE_BALL, () => {
+                this.speed = 5;
+                this.xSpeed = Math.cos(2 * Math.PI / 6) * this.speed;
+                this.ySpeed = Math.sin(2 * Math.PI / 6) * this.speed;
+            })
         }
 
         calcCollisions(player, level) {
@@ -140,9 +171,15 @@
             };
 
             const intersections = [...level.getCollisionLines(), ...player.getCollisionLines()]
-                .map(({type, line}) => ({intersection: findLineSegmentsIntersection(ballMovementLine, line), type}))
+                .map((intersection) => ({
+                    ...intersection,
+                    intersection: findLineSegmentsIntersection(ballMovementLine, intersection.line)
+                }))
                 .filter(({intersection}) =>
-                    intersection && (intersection.x !== prevPoint.x || intersection.y !== prevPoint.y)
+                    intersection && (
+                        Math.round(intersection.x * 1000) !== Math.round(prevPoint.x * 1000) ||
+                        Math.round(intersection.y * 1000) !== Math.round(prevPoint.y * 1000)
+                    )
                 )
 
             let closestIntersection;
@@ -153,10 +190,21 @@
                 );
             }
 
+            closestIntersection?.onCollision?.();
+
             if (closestIntersection?.type === intersectionTypes.HORIZONTAL) {
                 this.xSpeed = -this.xSpeed;
             } else if (closestIntersection?.type === intersectionTypes.VERTICAL) {
                 this.ySpeed = -this.ySpeed;
+            } else if (closestIntersection?.type === intersectionTypes.PLAYER) {
+                this.ySpeed = -this.ySpeed;
+
+                const interactionPosition = player.playerRect.x + player.playerRect.width / 2 - closestIntersection.intersection.x;
+                const coefficient = -(interactionPosition / player.playerRect.width);
+                const final = Math.PI * coefficient * 0.8;
+
+                this.xSpeed = Math.sin(final) * this.speed;
+                this.ySpeed = -Math.abs(Math.cos(final) * this.speed);
             }
 
             let nextX = closestIntersection ? closestIntersection.intersection.x : ballMovementLine.x2;
@@ -184,6 +232,7 @@
 
             if (!isGameStarted) {
                 this.x = player.playerRect.left + player.playerRect.width / 2;
+                this.y = player.playerRect.top - 10;
             } else {
                 this.calcCollisions(player, level);
             }
@@ -199,13 +248,23 @@
         width;
         height;
         brickElement;
+        initialHealth;
+        health;
+        onDestroy;
 
-        constructor(x, y) {
+        constructor(x, y, health = 10, onDestroy) {
             const brick = document.createElement('div');
             brick.style = `background: black; position: absolute; left: ${x}; top: ${y}; width: 4vw; height: 4vh;`;
             playArea.appendChild(brick);
 
             this.brickElement = brick;
+            this.initialHealth = health;
+            this.health = health;
+            this.onDestroy = onDestroy
+
+            this.onCollision = this.onCollision.bind(this);
+            this.calculatePosition = this.calculatePosition.bind(this);
+            mediator.subscribe(events.RESIZE, this.calculatePosition);
 
             this.calculatePosition();
         }
@@ -219,6 +278,16 @@
             this.height = height;
         }
 
+        onCollision() {
+            this.health--;
+            this.brickElement.style.opacity = String(this.health / this.initialHealth);
+
+            if (this.health < 1) {
+                mediator.unsubscribe(events.RESIZE, this.calculatePosition)
+                this.onDestroy?.(this);
+            }
+        }
+
         getCollisionLines() {
             const left = {x1: this.x, y1: this.y, x2: this.x, y2: this.y + this.height};
             const right = {x1: this.x + this.width, y1: this.y, x2: this.x + this.width, y2: this.y + this.height};
@@ -226,37 +295,52 @@
             const bottom = {x1: this.x, y1: this.y + this.height, x2: this.x + this.width, y2: this.y + this.height};
 
             return [
-                {line: left, type: intersectionTypes.HORIZONTAL},
-                {line: right, type: intersectionTypes.HORIZONTAL},
-                {line: top, type: intersectionTypes.VERTICAL},
-                {line: bottom, type: intersectionTypes.VERTICAL},
+                {line: left, type: intersectionTypes.HORIZONTAL, onCollision: this.onCollision},
+                {line: right, type: intersectionTypes.HORIZONTAL, onCollision: this.onCollision},
+                {line: top, type: intersectionTypes.VERTICAL, onCollision: this.onCollision},
+                {line: bottom, type: intersectionTypes.VERTICAL, onCollision: this.onCollision},
             ];
         }
     }
 
     class BaseLevel {
+        bricks = [];
+
+        constructor() {
+            this.handleBrickDestroy = this.handleBrickDestroy.bind(this);
+        }
+
         getCollisionLines() {
-            const left = {x1: 0, y1: 0, x2: 0, y2: innerHeight};
-            const right = {x1: innerWidth, y1: 0, x2: innerWidth, y2: innerHeight};
-            const top = {x1: 0, y1: 0, x2: innerWidth, y2: 0};
+            const left = {x1: 1, y1: -1, x2: 1, y2: innerHeight};
+            const right = {x1: innerWidth, y1: -1, x2: innerWidth, y2: innerHeight};
+            const top = {x1: -1, y1: 1, x2: innerWidth, y2: 1};
+            const bottom = {x1: -1, y1: innerHeight, x2: innerWidth, y2: innerHeight};
 
             return [
                 {line: left, type: intersectionTypes.HORIZONTAL},
                 {line: right, type: intersectionTypes.HORIZONTAL},
                 {line: top, type: intersectionTypes.VERTICAL},
+                {line: bottom, type: intersectionTypes.VERTICAL, onCollision: this.handleLose},
             ];
+        }
+
+        handleLose() {
+            isGameStarted = false;
+            mediator.publish(events.LOSE_BALL);
+        }
+
+        handleBrickDestroy(destroyed) {
+            this.bricks = this.bricks.filter(brick => brick !== destroyed);
         }
     }
 
     class Level1 extends BaseLevel {
-        bricks = [];
-
         constructor() {
             super();
 
-            for (let i = 1; i <= 9; i++) {
+            for (let i = 1; i <= 14; i++) {
                 for (let j = 1; j <= 19; j++) {
-                    this.bricks.push(new Brick(`${j * 5 - 2}vw`, `${i * 5}vh`));
+                    this.bricks.push(new Brick(`${j * 5 - 2}vw`, `${i * 5}vh`, 5, this.handleBrickDestroy));
                 }
             }
         }
