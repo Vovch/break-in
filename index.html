@@ -202,13 +202,12 @@
 
         constructor(x, y) {
             const brick = document.createElement('div');
-            brick.style = `background: black; position: absolute; left: ${x}; top: ${y}; width: 2vw; height: 1vh;`;
+            brick.style = `background: black; position: absolute; left: ${x}; top: ${y}; width: 4vw; height: 4vh;`;
+            playArea.appendChild(brick);
 
             this.brickElement = brick;
 
             this.calculatePosition();
-
-            playArea.appendChild(brick);
         }
 
         calculatePosition() {
@@ -222,9 +221,9 @@
 
         getCollisionLines() {
             const left = {x1: this.x, y1: this.y, x2: this.x, y2: this.y + this.height};
-            const right = {x1: this.x, y1: this.y, x2: this.x, y2: this.y + this.height};
-            const top = {x1: this.x, y1: this.y, x2: this.x, y2: this.y + this.height};
-            const bottom = {x1: this.x, y1: this.y, x2: this.x, y2: this.y + this.height};
+            const right = {x1: this.x + this.width, y1: this.y, x2: this.x + this.width, y2: this.y + this.height};
+            const top = {x1: this.x, y1: this.y, x2: this.x + this.width, y2: this.y};
+            const bottom = {x1: this.x, y1: this.y + this.height, x2: this.x + this.width, y2: this.y + this.height};
 
             return [
                 {line: left, type: intersectionTypes.HORIZONTAL},
@@ -250,8 +249,20 @@
     }
 
     class Level1 extends BaseLevel {
+        bricks = [];
+
         constructor() {
             super();
+
+            for (let i = 1; i <= 9; i++) {
+                for (let j = 1; j <= 19; j++) {
+                    this.bricks.push(new Brick(`${j * 5 - 2}vw`, `${i * 5}vh`));
+                }
+            }
+        }
+
+        getCollisionLines() {
+            return [...super.getCollisionLines(), ...this.bricks.flatMap(brick => brick.getCollisionLines())];
         }
     }
 
