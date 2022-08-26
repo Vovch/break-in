@@ -2,6 +2,9 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name='viewport'
+          content='width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0'>
+    <meta http-equiv='X-UA-Compatible' content='ie=edge'>
     <title>Break In</title>
 </head>
 <body>
@@ -42,10 +45,14 @@
 
     window.addEventListener('resize', () => mediator.publish(events.RESIZE));
     document.addEventListener('click', () => isGameStarted = true)
-    document.addEventListener('mousemove', (event) => {
-        mouseX = event.clientX;
-        mouseY = event.clientY;
-    });
+    document.addEventListener('mousemove', updateClientPosition);
+    document.addEventListener('touchstart', updateClientPosition);
+    document.addEventListener('touchmove', updateClientPosition);
+
+    function updateClientPosition(event) {
+        mouseX = event.clientX ?? event.touches[0].screenX;
+        mouseY = event.clientY ?? event.touches[0].screenY;
+    }
 
     // line intercept math by Paul Bourke http://paulbourke.net/geometry/pointlineplane/
     // Determine the intersection point of two line segments
@@ -176,10 +183,10 @@
                     intersection: findLineSegmentsIntersection(ballMovementLine, intersection.line)
                 }))
                 .filter(({intersection}) =>
-                    intersection && (
-                        Math.round(intersection.x * 1000) !== Math.round(prevPoint.x * 1000) ||
-                        Math.round(intersection.y * 1000) !== Math.round(prevPoint.y * 1000)
-                    )
+                        intersection && (
+                            Math.round(intersection.x * 100) !== Math.round(prevPoint.x * 100) ||
+                            Math.round(intersection.y * 100) !== Math.round(prevPoint.y * 100)
+                        )
                 )
 
             let closestIntersection;
