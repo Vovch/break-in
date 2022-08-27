@@ -1,14 +1,14 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang='en'>
 <head>
-    <meta charset="UTF-8">
+    <meta charset='UTF-8'>
     <meta name='viewport'
           content='width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0'>
     <meta http-equiv='X-UA-Compatible' content='ie=edge'>
     <title>Break In</title>
 </head>
 <body>
-<main id="play-area"></main>
+<main id='play-area'></main>
 
 <script>
     const mediator = {
@@ -24,27 +24,30 @@
             }
         },
         publish(name, data) {
-            this.subscribers[name]?.forEach((sub) => sub(data))
+            this.subscribers[name]?.forEach((sub) => sub(data));
         },
-    }
+    };
     const events = {
         RESIZE: 'RESIZE',
         LOSE_BALL: 'LOSE_BALL',
-    }
+    };
 
     const intersectionTypes = {
         VERTICAL: 'VERTICAL',
         HORIZONTAL: 'HORIZONTAL',
         PLAYER: 'PLAYER',
         NONE: 'NONE',
-    }
+    };
     const playArea = document.getElementById('play-area');
     let mouseX, mouseY;
     let prevTime, currTime;
     let isGameStarted = false;
+    // Коэффициент для расчёта скорости событий, происходящих в текущей итерации.
+    // Нужно, чтобы отвязать скорость игры от частоты кадров.
+    let loopSpeedCoefficient;
 
     window.addEventListener('resize', () => mediator.publish(events.RESIZE));
-    document.addEventListener('click', () => isGameStarted = true)
+    document.addEventListener('click', () => isGameStarted = true);
     document.addEventListener('mousemove', updateClientPosition);
     document.addEventListener('touchstart', updateClientPosition);
     document.addEventListener('touchmove', updateClientPosition);
@@ -61,30 +64,30 @@
 
         // Check if none of the lines are of length 0
         if ((x1 === x2 && y1 === y2) || (x3 === x4 && y3 === y4)) {
-            return false
+            return false;
         }
 
-        const denominator = ((y4 - y3) * (x2 - x1) - (x4 - x3) * (y2 - y1))
+        const denominator = ((y4 - y3) * (x2 - x1) - (x4 - x3) * (y2 - y1));
 
         // Lines are parallel
         if (denominator === 0) {
-            return false
+            return false;
         }
 
-        let ua = ((x4 - x3) * (y1 - y3) - (y4 - y3) * (x1 - x3)) / denominator
-        let ub = ((x2 - x1) * (y1 - y3) - (y2 - y1) * (x1 - x3)) / denominator
+        let ua = ((x4 - x3) * (y1 - y3) - (y4 - y3) * (x1 - x3)) / denominator;
+        let ub = ((x2 - x1) * (y1 - y3) - (y2 - y1) * (x1 - x3)) / denominator;
 
         // is the intersection along the segments
         if (ua < 0 || ua > 1 || ub < 0 || ub > 1) {
-            return false
+            return false;
         }
 
         // Return an object with the x and y coordinates of the intersection
-        let x = x1 + ua * (x2 - x1)
-        let y = y1 + ua * (y2 - y1)
+        let x = x1 + ua * (x2 - x1);
+        let y = y1 + ua * (y2 - y1);
 
-        return {x, y}
-    }
+        return {x, y};
+    };
 
     const findDistance = ({x, y}, {x: x2, y: y2}) => Math.sqrt((x - x2) ** 2 + (y - y2) ** 2);
 
@@ -95,8 +98,8 @@
         playerRect;
 
         constructor() {
-            const playerWidth = 10;
-            const playerHeight = 3
+            const playerWidth = 15;
+            const playerHeight = 3;
             const player = document.createElement('div');
             player.style = `width: ${playerWidth}vw; height: ${playerHeight}vh; background: black; position: fixed; bottom: 1vh; left: 50vw; transform: translate(-50%, -50%)`;
 
@@ -112,7 +115,7 @@
                 y1: this.playerRect.y,
                 x2: this.playerRect.x + this.playerRect.width,
                 y2: this.playerRect.y,
-            }
+            };
 
             return [
                 {line: top, type: intersectionTypes.PLAYER},
@@ -145,10 +148,11 @@
         ballDiameter = 1;
         totalDistanceAvailable = 0;
         ballTrajectory = [];
+        lastCollision = null;
 
         constructor() {
             const ball = document.createElement('div');
-            ball.style = `width: ${this.ballDiameter}vh; height: ${this.ballDiameter}vh; background: black; position: fixed; bottom: 7vh; left: 50vw; transform: translate(-50%, -50%); border-radius: 50%;`
+            ball.style = `width: ${this.ballDiameter}vmax; height: ${this.ballDiameter}vmax; background: black; position: fixed; bottom: 7vh; left: 50vw; transform: translate(-50%, -50%); border-radius: 50%;`;
 
             playArea.appendChild(ball);
             const ballRect = ball.getBoundingClientRect();
@@ -163,7 +167,7 @@
                 this.speed = 5;
                 this.xSpeed = Math.cos(2 * Math.PI / 6) * this.speed;
                 this.ySpeed = Math.sin(2 * Math.PI / 6) * this.speed;
-            })
+            });
         }
 
         calcCollisions(player, level) {
@@ -173,29 +177,29 @@
             const ballMovementLine = {
                 x1: prevPoint.x,
                 y1: prevPoint.y,
-                x2: prevPoint.x + this.xSpeed * availablePathPercent,
-                y2: prevPoint.y + this.ySpeed * availablePathPercent,
+                x2: prevPoint.x + this.xSpeed * loopSpeedCoefficient * availablePathPercent,
+                y2: prevPoint.y + this.ySpeed * loopSpeedCoefficient * availablePathPercent,
             };
 
             const intersections = [...level.getCollisionLines(), ...player.getCollisionLines()]
-                .map((intersection) => ({
+                .map((intersection, index) => ({
                     ...intersection,
-                    intersection: findLineSegmentsIntersection(ballMovementLine, intersection.line)
+                    index,
+                    intersection: findLineSegmentsIntersection(ballMovementLine, intersection.line),
                 }))
-                .filter(({intersection}) =>
-                        intersection && (
-                            Math.round(intersection.x * 100) !== Math.round(prevPoint.x * 100) ||
-                            Math.round(intersection.y * 100) !== Math.round(prevPoint.y * 100)
-                        )
-                )
+                .filter((intersection) =>
+                    intersection.intersection && (!this.lastCollision || intersection.index !== this.lastCollision.index)
+                );
 
             let closestIntersection;
 
             if (intersections.length) {
                 closestIntersection = intersections.reduce((acc, item) =>
-                    findDistance(prevPoint, acc.intersection) > findDistance(prevPoint, item.intersection) ? item : acc
+                    findDistance(prevPoint, acc.intersection) > findDistance(prevPoint, item.intersection) ? item : acc,
                 );
             }
+
+            this.lastCollision = closestIntersection;
 
             closestIntersection?.onCollision?.();
 
@@ -215,8 +219,23 @@
                 this.ySpeed = -Math.abs(Math.cos(final) * this.speed);
             }
 
-            let nextX = closestIntersection ? closestIntersection.intersection.x : ballMovementLine.x2;
-            let nextY = closestIntersection ? closestIntersection.intersection.y : ballMovementLine.y2;
+            let nextX = closestIntersection ? Math.round(closestIntersection.intersection.x * 10000) / 10000 : ballMovementLine.x2;
+            let nextY = closestIntersection ? Math.round(closestIntersection.intersection.y * 10000) / 10000 : ballMovementLine.y2;
+
+            /**
+             * TODO: При расчёте столкновений, похоже, есть ошибки округления, которые приводят к тому, что шарик
+             * оказывается за краем отрезка, с которым рассчитано столкновение и на следующем ходу снова находит
+             * столкновение с тем же отрезком. Таким образом, на следующей итерации он снова меняет направление и
+             * улетает далее. Бороться с этим пока не хочу - потому нужен этот костыль.
+             *
+             * В данный момент происходит запись последнего столкновения по порядку, однако это может приводить к
+             * проблемам, когда один из кирпичей исчезает.
+             */
+            if (nextX < 0) nextX = 1;
+            if (nextY < 0) nextY = 1;
+            if (nextX > innerWidth) nextX = innerWidth - 1;
+            if (nextY > innerHeight) nextY = innerHeight - 1;
+            /** END TODO **/
 
             this.ballTrajectory.push({x: nextX, y: nextY});
 
@@ -234,8 +253,8 @@
             this.ballTrajectory = [{x: this.x, y: this.y}];
             this.distanceTravelled = 0;
             this.totalDistanceAvailable = findDistance({x: this.x, y: this.y}, {
-                x: this.x + this.xSpeed,
-                y: this.y + this.ySpeed
+                x: this.x + this.xSpeed * loopSpeedCoefficient,
+                y: this.y + this.ySpeed * loopSpeedCoefficient,
             });
 
             if (!isGameStarted) {
@@ -243,6 +262,7 @@
                 this.y = player.playerRect.top - 10;
             } else {
                 this.calcCollisions(player, level);
+                this.lastCollision = null;
             }
 
             this.ballElement.style.left = `${this.x}px`;
@@ -268,7 +288,7 @@
             this.brickElement = brick;
             this.initialHealth = health;
             this.health = health;
-            this.onDestroy = onDestroy
+            this.onDestroy = onDestroy;
 
             this.onCollision = this.onCollision.bind(this);
             this.calculatePosition = this.calculatePosition.bind(this);
@@ -291,7 +311,7 @@
             this.brickElement.style.opacity = String(this.health / this.initialHealth);
 
             if (this.health < 1) {
-                mediator.unsubscribe(events.RESIZE, this.calculatePosition)
+                mediator.unsubscribe(events.RESIZE, this.calculatePosition);
                 this.onDestroy?.(this);
             }
         }
@@ -319,10 +339,10 @@
         }
 
         getCollisionLines() {
-            const left = {x1: 1, y1: -1, x2: 1, y2: innerHeight};
-            const right = {x1: innerWidth, y1: -1, x2: innerWidth, y2: innerHeight};
-            const top = {x1: -1, y1: 1, x2: innerWidth, y2: 1};
-            const bottom = {x1: -1, y1: innerHeight, x2: innerWidth, y2: innerHeight};
+            const left = {x1: 0, y1: 0, x2: 0, y2: innerHeight};
+            const right = {x1: innerWidth, y1: 0, x2: innerWidth, y2: innerHeight};
+            const top = {x1: 0, y1: 0, x2: innerWidth, y2: 0};
+            const bottom = {x1: 0, y1: innerHeight, x2: innerWidth, y2: innerHeight};
 
             return [
                 {line: left, type: intersectionTypes.HORIZONTAL},
@@ -359,15 +379,16 @@
     }
 
     const gameLoop = (player, ball, level) => {
-        currTime = Date.now();
+        currTime = performance.now();
+        loopSpeedCoefficient = (currTime - prevTime) / 10;
+        prevTime = performance.now();
 
         player.move(player);
         ball.move(player, level);
 
         requestAnimationFrame(() => gameLoop(player, ball, level));
 
-        prevTime = Date.now();
-    }
+    };
 
     gameLoop(new Player(), new Ball(), new Level1());
 </script>
