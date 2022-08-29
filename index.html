@@ -244,7 +244,7 @@
 
             this.distanceTravelled += findDistance({x: nextX, y: nextY}, {x: prevPoint.x, y: prevPoint.y});
 
-            if (!(this.totalDistanceAvailable.toFixed(2) <= this.distanceTravelled.toFixed(2))) {
+            if (!(Math.round(this.totalDistanceAvailable * 1000) <= Math.round(this.distanceTravelled * 1000))) {
                 this.calcCollisions(player, level);
             }
         }
