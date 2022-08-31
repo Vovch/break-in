@@ -11,6 +11,8 @@
 <main id='play-area'></main>
 
 <script>
+    'use strict';
+
     const mediator = {
         subscribers: {},
         subscribe(name, subscription) {
@@ -30,6 +32,7 @@
     const events = {
         RESIZE: 'RESIZE',
         LOSE_BALL: 'LOSE_BALL',
+        SET_STATE: 'SET_STATE',
     };
 
     const intersectionTypes = {
@@ -38,24 +41,6 @@
         PLAYER: 'PLAYER',
         NONE: 'NONE',
     };
-    const playArea = document.getElementById('play-area');
-    let mouseX, mouseY;
-    let prevTime, currTime;
-    let isGameStarted = false;
-    // Коэффициент для расчёта скорости событий, происходящих в текущей итерации.
-    // Нужно, чтобы отвязать скорость игры от частоты кадров.
-    let loopSpeedCoefficient;
-
-    window.addEventListener('resize', () => mediator.publish(events.RESIZE));
-    document.addEventListener('click', () => isGameStarted = true);
-    document.addEventListener('mousemove', updateClientPosition);
-    document.addEventListener('touchstart', updateClientPosition);
-    document.addEventListener('touchmove', updateClientPosition);
-
-    function updateClientPosition(event) {
-        mouseX = event.clientX ?? event.touches[0].screenX;
-        mouseY = event.clientY ?? event.touches[0].screenY;
-    }
 
     // line intercept math by Paul Bourke http://paulbourke.net/geometry/pointlineplane/
     // Determine the intersection point of two line segments
@@ -91,22 +76,70 @@
 
     const findDistance = ({x, y}, {x: x2, y: y2}) => Math.sqrt((x - x2) ** 2 + (y - y2) ** 2);
 
+    class GameController {
+        state = {
+            loopSpeedCoefficient: 0,
+
+            // Коэффициент для расчёта скорости событий, происходящих в текущей итерации.
+            // Нужно, чтобы отвязать скорость игры от частоты кадров.
+            isGameStarted: false,
+            currTime: 0,
+            playArea: document.getElementById('play-area'),
+            prevTime: 0,
+            powerUps: [],
+        };
+
+        constructor() {
+            mediator.subscribe(events.SET_STATE, state => this.state = state);
+            mediator.subscribe(events.LOSE_BALL, () => this.handleLoseBall());
+
+            window.addEventListener('resize', () => mediator.publish(events.RESIZE));
+            document.addEventListener('click', () => this.state.isGameStarted = true);
+            document.addEventListener('mousemove', (event) => this.updateClientPosition(event));
+            document.addEventListener('touchstart', (event) => this.updateClientPosition(event));
+            document.addEventListener('touchmove', (event) => this.updateClientPosition(event));
+        }
+
+        createGame() {
+            this.gameLoop(new Player(this.state), new Ball(this.state), new Level1(this.state));
+        }
+
+        updateClientPosition(event) {
+            this.state.mouseX = event.clientX ?? event.touches[0].screenX;
+            this.state.mouseY = event.clientY ?? event.touches[0].screenY;
+        }
+
+        gameLoop(player, ball, level) {
+            this.state.currTime = performance.now();
+            this.state.loopSpeedCoefficient = (this.state.currTime - this.state.prevTime) / 10;
+            this.state.prevTime = performance.now();
+
+            player.move(this.state);
+            ball.move(player, level, this.state);
+
+            requestAnimationFrame(() => this.gameLoop(player, ball, level));
+        }
+
+        handleLoseBall() {
+            this.state.isGameStarted = false;
+        }
+    }
+
     class Player {
         x;
         y;
         playerElement;
         playerRect;
 
-        constructor() {
+        constructor(state) {
             const playerWidth = 15;
             const playerHeight = 3;
             const player = document.createElement('div');
             player.style = `width: ${playerWidth}vw; height: ${playerHeight}vh; background: black; position: fixed; bottom: 1vh; left: 50vw; transform: translate(-50%, -50%)`;
 
-            playArea.appendChild(player);
+            state.playArea.appendChild(player);
 
             this.playerElement = player;
-            this.move();
         }
 
         getCollisionLines() {
@@ -122,16 +155,16 @@
             ];
         }
 
-        move() {
+        move(state) {
             this.playerRect = this.playerElement.getBoundingClientRect();
             let playerX;
 
-            if (mouseX < this.playerRect.width / 2) {
+            if (state.mouseX < this.playerRect.width / 2) {
                 playerX = this.playerRect.width / 2;
-            } else if (mouseX > innerWidth - this.playerRect.width / 2) {
+            } else if (state.mouseX > innerWidth - this.playerRect.width / 2) {
                 playerX = innerWidth - this.playerRect.width / 2;
             } else {
-                playerX = mouseX;
+                playerX = state.mouseX;
             }
 
             this.playerElement.style.left = `${playerX}px`;
@@ -150,11 +183,11 @@
         ballTrajectory = [];
         lastCollision = null;
 
-        constructor() {
+        constructor(state) {
             const ball = document.createElement('div');
             ball.style = `width: ${this.ballDiameter}vmax; height: ${this.ballDiameter}vmax; background: black; position: fixed; bottom: 7vh; left: 50vw; transform: translate(-50%, -50%); border-radius: 50%;`;
 
-            playArea.appendChild(ball);
+            state.playArea.appendChild(ball);
             const ballRect = ball.getBoundingClientRect();
             this.x = ballRect.x;
             this.y = ballRect.y;
@@ -170,15 +203,15 @@
             });
         }
 
-        calcCollisions(player, level) {
+        calcCollisions(player, level, state) {
             const availablePathPercent = (this.totalDistanceAvailable - this.distanceTravelled) / this.totalDistanceAvailable;
             const prevPoint = this.ballTrajectory.slice(-1)[0];
 
             const ballMovementLine = {
                 x1: prevPoint.x,
                 y1: prevPoint.y,
-                x2: prevPoint.x + this.xSpeed * loopSpeedCoefficient * availablePathPercent,
-                y2: prevPoint.y + this.ySpeed * loopSpeedCoefficient * availablePathPercent,
+                x2: prevPoint.x + this.xSpeed * state.loopSpeedCoefficient * availablePathPercent,
+                y2: prevPoint.y + this.ySpeed * state.loopSpeedCoefficient * availablePathPercent,
             };
 
             const intersections = [...level.getCollisionLines(), ...player.getCollisionLines()]
@@ -245,23 +278,23 @@
             this.distanceTravelled += findDistance({x: nextX, y: nextY}, {x: prevPoint.x, y: prevPoint.y});
 
             if (!(Math.round(this.totalDistanceAvailable * 1000) <= Math.round(this.distanceTravelled * 1000))) {
-                this.calcCollisions(player, level);
+                this.calcCollisions(player, level, state);
             }
         }
 
-        move(player, level) {
+        move(player, level, state) {
             this.ballTrajectory = [{x: this.x, y: this.y}];
             this.distanceTravelled = 0;
             this.totalDistanceAvailable = findDistance({x: this.x, y: this.y}, {
-                x: this.x + this.xSpeed * loopSpeedCoefficient,
-                y: this.y + this.ySpeed * loopSpeedCoefficient,
+                x: this.x + this.xSpeed * state.loopSpeedCoefficient,
+                y: this.y + this.ySpeed * state.loopSpeedCoefficient,
             });
 
-            if (!isGameStarted) {
+            if (!state.isGameStarted) {
                 this.x = player.playerRect.left + player.playerRect.width / 2;
                 this.y = player.playerRect.top - 10;
             } else {
-                this.calcCollisions(player, level);
+                this.calcCollisions(player, level, state);
                 this.lastCollision = null;
             }
 
@@ -280,10 +313,10 @@
         health;
         onDestroy;
 
-        constructor(x, y, health = 10, onDestroy) {
+        constructor(x, y, health = 10, state, onDestroy) {
             const brick = document.createElement('div');
             brick.style = `background: black; position: absolute; left: ${x}; top: ${y}; width: 4vw; height: 4vh;`;
-            playArea.appendChild(brick);
+            state.playArea.appendChild(brick);
 
             this.brickElement = brick;
             this.initialHealth = health;
@@ -349,11 +382,11 @@
                 {line: right, type: intersectionTypes.HORIZONTAL},
                 {line: top, type: intersectionTypes.VERTICAL},
                 {line: bottom, type: intersectionTypes.VERTICAL, onCollision: this.handleLose},
+                ...this.bricks.flatMap(brick => brick.getCollisionLines()),
             ];
         }
 
         handleLose() {
-            isGameStarted = false;
             mediator.publish(events.LOSE_BALL);
         }
 
@@ -363,34 +396,23 @@
     }
 
     class Level1 extends BaseLevel {
-        constructor() {
+        constructor(state) {
             super();
 
             for (let i = 1; i <= 14; i++) {
                 for (let j = 1; j <= 19; j++) {
-                    this.bricks.push(new Brick(`${j * 5 - 2}vw`, `${i * 5}vh`, 3, this.handleBrickDestroy));
+                    const x = `${j * 5 - 2}vw`;
+                    const y = `${i * 5}vh`;
+                    const health = 3;
+
+                    this.bricks.push(new Brick(x, y, health, state, this.handleBrickDestroy));
                 }
             }
         }
-
-        getCollisionLines() {
-            return [...super.getCollisionLines(), ...this.bricks.flatMap(brick => brick.getCollisionLines())];
-        }
     }
 
-    const gameLoop = (player, ball, level) => {
-        currTime = performance.now();
-        loopSpeedCoefficient = (currTime - prevTime) / 10;
-        prevTime = performance.now();
-
-        player.move(player);
-        ball.move(player, level);
-
-        requestAnimationFrame(() => gameLoop(player, ball, level));
-
-    };
-
-    gameLoop(new Player(), new Ball(), new Level1());
+    const gameController = new GameController();
+    gameController.createGame();
 </script>
 </body>
 </html>
