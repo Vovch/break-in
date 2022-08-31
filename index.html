@@ -6,8 +6,44 @@
           content='width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0'>
     <meta http-equiv='X-UA-Compatible' content='ie=edge'>
     <title>Break In</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        html, body {
+            margin: 0;
+            padding: 0;
+            border: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        body {
+            display: flex;
+            flex-direction: column;
+        }
+
+        #header {
+            width: 100vw;
+            height: 5vw;
+            flex-grow: 0;
+            flex-shrink: 0;
+            border-bottom: 1px solid black;
+            display: flex;
+            align-items: center;
+            padding: 0 1vw;
+        }
+
+        #play-area {
+            flex-grow: 1;
+            position: relative;
+        }
+    </style>
 </head>
 <body>
+<header id="header">
+    <span class="score__label">Score:&nbsp;</span><span id="score"></span>
+</header>
 <main id='play-area'></main>
 
 <script>
@@ -32,7 +68,7 @@
     const events = {
         RESIZE: 'RESIZE',
         LOSE_BALL: 'LOSE_BALL',
-        SET_STATE: 'SET_STATE',
+        DESTROY_BRICK: 'DESTROY_BRICK',
     };
 
     const intersectionTypes = {
@@ -78,6 +114,7 @@
 
     class GameController {
         state = {
+            score: 0,
             loopSpeedCoefficient: 0,
 
             // Коэффициент для расчёта скорости событий, происходящих в текущей итерации.
@@ -85,23 +122,26 @@
             isGameStarted: false,
             currTime: 0,
             playArea: document.getElementById('play-area'),
+            scoreArea: document.getElementById('score'),
             prevTime: 0,
             powerUps: [],
         };
 
         constructor() {
-            mediator.subscribe(events.SET_STATE, state => this.state = state);
             mediator.subscribe(events.LOSE_BALL, () => this.handleLoseBall());
+            mediator.subscribe(events.DESTROY_BRICK, (brick) => this.handleDestroyBrick(brick));
 
             window.addEventListener('resize', () => mediator.publish(events.RESIZE));
             document.addEventListener('click', () => this.state.isGameStarted = true);
             document.addEventListener('mousemove', (event) => this.updateClientPosition(event));
             document.addEventListener('touchstart', (event) => this.updateClientPosition(event));
             document.addEventListener('touchmove', (event) => this.updateClientPosition(event));
+
+            this.renderHeader();
         }
 
         createGame() {
-            this.gameLoop(new Player(this.state), new Ball(this.state), new Level1(this.state));
+            this.makeTurn(new Player(this.state), new Ball(this.state), new Level1(this.state));
         }
 
         updateClientPosition(event) {
@@ -109,7 +149,7 @@
             this.state.mouseY = event.clientY ?? event.touches[0].screenY;
         }
 
-        gameLoop(player, ball, level) {
+        makeTurn(player, ball, level) {
             this.state.currTime = performance.now();
             this.state.loopSpeedCoefficient = (this.state.currTime - this.state.prevTime) / 10;
             this.state.prevTime = performance.now();
@@ -117,11 +157,21 @@
             player.move(this.state);
             ball.move(player, level, this.state);
 
-            requestAnimationFrame(() => this.gameLoop(player, ball, level));
+            requestAnimationFrame(() => this.makeTurn(player, ball, level));
         }
 
         handleLoseBall() {
             this.state.isGameStarted = false;
+        }
+
+        handleDestroyBrick() {
+            this.state.score += 100;
+
+            this.renderHeader();
+        }
+
+        renderHeader() {
+            this.state.scoreArea.innerText = this.state.score;
         }
     }
 
@@ -344,9 +394,15 @@
             this.brickElement.style.opacity = String(this.health / this.initialHealth);
 
             if (this.health < 1) {
-                mediator.unsubscribe(events.RESIZE, this.calculatePosition);
-                this.onDestroy?.(this);
+                this.destroy();
             }
+        }
+
+        destroy() {
+            mediator.unsubscribe(events.RESIZE, this.calculatePosition);
+            mediator.publish(events.DESTROY_BRICK, this);
+            this.brickElement.parentNode.removeChild(this.brickElement);
+            this.onDestroy?.(this);
         }
 
         getCollisionLines() {
@@ -365,17 +421,36 @@
     }
 
     class BaseLevel {
+        x;
+        y;
+        width;
+        height;
         bricks = [];
+        levelElement;
 
-        constructor() {
+        constructor(state) {
+            this.levelElement = state.playArea;
+            this.calculatePosition();
+
+            mediator.subscribe(events.RESIZE, () => this.calculatePosition);
+
             this.handleBrickDestroy = this.handleBrickDestroy.bind(this);
         }
 
+        calculatePosition() {
+            const {x, y, width, height} = this.levelElement.getBoundingClientRect();
+
+            this.x = x;
+            this.y = y;
+            this.width = width;
+            this.height = height;
+        }
+
         getCollisionLines() {
-            const left = {x1: 0, y1: 0, x2: 0, y2: innerHeight};
-            const right = {x1: innerWidth, y1: 0, x2: innerWidth, y2: innerHeight};
-            const top = {x1: 0, y1: 0, x2: innerWidth, y2: 0};
-            const bottom = {x1: 0, y1: innerHeight, x2: innerWidth, y2: innerHeight};
+            const left = {x1: this.x, y1: this.y, x2: this.x, y2: this.y + this.height};
+            const right = {x1: this.x + this.width, y1: this.y, x2: this.x + this.width, y2: this.y + this.height};
+            const top = {x1: this.x, y1: this.y, x2: this.x + this.height, y2: this.y};
+            const bottom = {x1: this.x, y1: this.y + this.height, x2: this.x + this.width, y2: this.y + this.height};
 
             return [
                 {line: left, type: intersectionTypes.HORIZONTAL},
@@ -397,7 +472,7 @@
 
     class Level1 extends BaseLevel {
         constructor(state) {
-            super();
+            super(state);
 
             for (let i = 1; i <= 14; i++) {
                 for (let j = 1; j <= 19; j++) {
