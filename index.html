@@ -28,7 +28,7 @@
             height: 5vw;
             flex-grow: 0;
             flex-shrink: 0;
-            border-bottom: 1px solid black;
+            border-bottom: 2px solid black;
             display: flex;
             align-items: center;
             padding: 0 1vw;
@@ -365,7 +365,14 @@
 
         constructor(x, y, health = 10, state, onDestroy) {
             const brick = document.createElement('div');
-            brick.style = `background: black; position: absolute; left: ${x}; top: ${y}; width: 4vw; height: 4vh;`;
+            brick.style = `
+                background: black;
+                position: absolute;
+                left: ${x};
+                top: ${y};
+                width: 4vw;
+                height: 4vh;
+            `;
             state.playArea.appendChild(brick);
 
             this.brickElement = brick;
@@ -432,7 +439,7 @@
             this.levelElement = state.playArea;
             this.calculatePosition();
 
-            mediator.subscribe(events.RESIZE, () => this.calculatePosition);
+            mediator.subscribe(events.RESIZE, () => this.calculatePosition());
 
             this.handleBrickDestroy = this.handleBrickDestroy.bind(this);
         }
