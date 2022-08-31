@@ -10,12 +10,14 @@
         * {
             box-sizing: border-box;
         }
+
         html, body {
             margin: 0;
             padding: 0;
             border: 0;
             width: 100%;
             height: 100%;
+            overflow: hidden;
         }
 
         body {
@@ -69,6 +71,7 @@
         RESIZE: 'RESIZE',
         LOSE_BALL: 'LOSE_BALL',
         DESTROY_BRICK: 'DESTROY_BRICK',
+        CATCH_POWER_UP: 'CATCH_POWER_UP',
     };
 
     const intersectionTypes = {
@@ -77,6 +80,11 @@
         PLAYER: 'PLAYER',
         NONE: 'NONE',
     };
+
+    const powerUpTypes = {
+        SCORE: 'SCORE',
+        BREAK_ALL: 'BREAK_ALL',
+    }
 
     // line intercept math by Paul Bourke http://paulbourke.net/geometry/pointlineplane/
     // Determine the intersection point of two line segments
@@ -113,6 +121,7 @@
     const findDistance = ({x, y}, {x: x2, y: y2}) => Math.sqrt((x - x2) ** 2 + (y - y2) ** 2);
 
     class GameController {
+        powerUpChance = 0.1;
         state = {
             score: 0,
             loopSpeedCoefficient: 0,
@@ -125,11 +134,15 @@
             scoreArea: document.getElementById('score'),
             prevTime: 0,
             powerUps: [],
+            balls: [],
+            player: [],
+            level: null,
         };
 
         constructor() {
             mediator.subscribe(events.LOSE_BALL, () => this.handleLoseBall());
             mediator.subscribe(events.DESTROY_BRICK, (brick) => this.handleDestroyBrick(brick));
+            mediator.subscribe(events.CATCH_POWER_UP, (powerUp) => this.handleCatchPowerUp(powerUp))
 
             window.addEventListener('resize', () => mediator.publish(events.RESIZE));
             document.addEventListener('click', () => this.state.isGameStarted = true);
@@ -141,7 +154,11 @@
         }
 
         createGame() {
-            this.makeTurn(new Player(this.state), new Ball(this.state), new Level1(this.state));
+            this.state.player = new Player(this.state);
+            this.state.balls = [new Ball(this.state)];
+            this.state.level = new Level1(this.state);
+
+            this.makeTurn();
         }
 
         updateClientPosition(event) {
@@ -149,25 +166,40 @@
             this.state.mouseY = event.clientY ?? event.touches[0].screenY;
         }
 
-        makeTurn(player, ball, level) {
+        makeTurn() {
             this.state.currTime = performance.now();
             this.state.loopSpeedCoefficient = (this.state.currTime - this.state.prevTime) / 10;
             this.state.prevTime = performance.now();
 
-            player.move(this.state);
-            ball.move(player, level, this.state);
+            this.state.player.move(this.state);
+            this.state.balls.forEach(ball => ball.move(this.state.player, this.state.level, this.state));
+            this.state.powerUps.forEach(powerUp => powerUp.move(this.state));
 
-            requestAnimationFrame(() => this.makeTurn(player, ball, level));
+            requestAnimationFrame(() => this.makeTurn());
+        }
+
+        handleCatchPowerUp(powerUp) {
+            this.state.score += 1000;
         }
 
         handleLoseBall() {
             this.state.isGameStarted = false;
         }
 
-        handleDestroyBrick() {
+        handleDestroyBrick(brick) {
+            const isPowerUp = Math.random() <= this.powerUpChance;
+
+            if (isPowerUp) {
+                this.state.powerUps.push(new PowerUp(this.state, {x: brick.x, y: brick.y}, this.handleDestroyPowerUp))
+            }
+
             this.state.score += 100;
 
             this.renderHeader();
+        }
+
+        handleDestroyPowerUp = (powerUp) => {
+            this.state.powerUps = this.state.powerUps.filter(p => p !== powerUp);
         }
 
         renderHeader() {
@@ -185,7 +217,7 @@
             const playerWidth = 15;
             const playerHeight = 3;
             const player = document.createElement('div');
-            player.style = `width: ${playerWidth}vw; height: ${playerHeight}vh; background: black; position: fixed; bottom: 1vh; left: 50vw; transform: translate(-50%, -50%)`;
+            player.style = `width: ${playerWidth}vw; height: ${playerHeight}vh; background: black; position: absolute; bottom: 1vh; left: 50vw; transform: translate(-50%, -50%)`;
 
             state.playArea.appendChild(player);
 
@@ -199,9 +231,16 @@
                 x2: this.playerRect.x + this.playerRect.width,
                 y2: this.playerRect.y,
             };
+            const bottom = {
+                x1: this.playerRect.x,
+                y1: this.playerRect.y + this.playerRect.height,
+                x2: this.playerRect.x + this.playerRect.width,
+                y2: this.playerRect.y + this.playerRect.height,
+            };
 
             return [
                 {line: top, type: intersectionTypes.PLAYER},
+                {line: bottom, type: intersectionTypes.NONE},
             ];
         }
 
@@ -232,6 +271,8 @@
         totalDistanceAvailable = 0;
         ballTrajectory = [];
         lastCollision = null;
+        // debug
+        calccount = 0;
 
         constructor(state) {
             const ball = document.createElement('div');
@@ -254,6 +295,9 @@
         }
 
         calcCollisions(player, level, state) {
+            if (this.calccount > 1000) {
+                debugger;
+            }
             const availablePathPercent = (this.totalDistanceAvailable - this.distanceTravelled) / this.totalDistanceAvailable;
             const prevPoint = this.ballTrajectory.slice(-1)[0];
 
@@ -314,10 +358,10 @@
              * В данный момент происходит запись последнего столкновения по порядку, однако это может приводить к
              * проблемам, когда один из кирпичей исчезает.
              */
-            if (nextX < 0) nextX = 1;
-            if (nextY < 0) nextY = 1;
-            if (nextX > innerWidth) nextX = innerWidth - 1;
-            if (nextY > innerHeight) nextY = innerHeight - 1;
+            if (nextX < state.level.x) nextX = state.level.x + 1;
+            if (nextY < state.level.y) nextY = state.level.y + 1;
+            if (nextX > state.level.x + state.level.width) nextX = state.level.x + state.level.width - 1;
+            if (nextY > state.level.y + state.level.height) nextY = state.level.y + state.level.height - 1;
             /** END TODO **/
 
             this.ballTrajectory.push({x: nextX, y: nextY});
@@ -328,11 +372,13 @@
             this.distanceTravelled += findDistance({x: nextX, y: nextY}, {x: prevPoint.x, y: prevPoint.y});
 
             if (!(Math.round(this.totalDistanceAvailable * 1000) <= Math.round(this.distanceTravelled * 1000))) {
+                this.calccount += 1;
                 this.calcCollisions(player, level, state);
             }
         }
 
         move(player, level, state) {
+            this.calccount = 0
             this.ballTrajectory = [{x: this.x, y: this.y}];
             this.distanceTravelled = 0;
             this.totalDistanceAvailable = findDistance({x: this.x, y: this.y}, {
@@ -427,6 +473,94 @@
         }
     }
 
+    class PowerUp {
+        x;
+        y;
+        width;
+        height;
+        type;
+        color = '#3a3';
+        element;
+        speed = 1;
+        onDestroy;
+
+        constructor(state, position, onDestroy, type = powerUpTypes.SCORE) {
+            this.type = type;
+            this.x = position.x;
+            this.y = position.y;
+
+            this.onDestroy = onDestroy;
+
+            const powerup = document.createElement('div');
+            powerup.style = `
+                background: ${this.color};
+                position: absolute;
+                left: ${this.x}px;
+                top: ${this.y}px;
+                width: 4vw;
+                height: 4vh;
+                z-index: -1;
+            `;
+            this.element = powerup;
+
+            state.playArea.appendChild(this.element);
+
+            this.calculatePosition();
+
+            this.element.style.position = 'fixed';
+            this.element.style.top = this.y + 'px';
+            this.element.style.left = this.x + 'px';
+
+        }
+
+        calculatePosition() {
+            const {x, y, width, height} = this.element.getBoundingClientRect();
+
+            this.x = x;
+            this.y = y;
+            this.width = width;
+            this.height = height;
+        }
+
+        move(state) {
+            const movementLines = [{
+                x1: this.x,
+                y1: this.y,
+                x2: this.x,
+                y2: this.y + this.height + this.speed * state.loopSpeedCoefficient,
+            }, {
+                x1: this.x + this.width,
+                y1: this.y,
+                x2: this.x + this.width,
+                y2: this.y + this.height + this.speed * state.loopSpeedCoefficient,
+            }];
+
+            const intersections = state.player.getCollisionLines()
+                .map((intersection, index) => ({
+                    ...intersection,
+                    index,
+                    intersection: findLineSegmentsIntersection(movementLines[0], intersection.line) || findLineSegmentsIntersection(movementLines[1], intersection.line),
+                }))
+                .filter(({intersection}) => intersection);
+
+            this.y = movementLines[0].y2 - this.height;
+
+            this.element.style.top = `${this.y}px`;
+
+            if (intersections.length) {
+                mediator.publish(events.CATCH_POWER_UP, this);
+                this.destroy();
+            } else if (this.y >= innerHeight) {
+                this.destroy();
+            }
+        }
+
+        destroy() {
+            this.element.parentNode?.removeChild(this.element);
+            this.onDestroy?.(this);
+        }
+    }
+
     class BaseLevel {
         x;
         y;
@@ -456,7 +590,7 @@
         getCollisionLines() {
             const left = {x1: this.x, y1: this.y, x2: this.x, y2: this.y + this.height};
             const right = {x1: this.x + this.width, y1: this.y, x2: this.x + this.width, y2: this.y + this.height};
-            const top = {x1: this.x, y1: this.y, x2: this.x + this.height, y2: this.y};
+            const top = {x1: this.x, y1: this.y, x2: this.x + this.width, y2: this.y};
             const bottom = {x1: this.x, y1: this.y + this.height, x2: this.x + this.width, y2: this.y + this.height};
 
             return [
